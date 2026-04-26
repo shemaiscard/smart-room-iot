@@ -103,7 +103,7 @@ st.sidebar.info("Monitoring and controlling smart actuators via MQTT.")
 
 if 'mqtt_client' not in st.session_state and mode == "Live MQTT":
     client_id = f"giscard-dash-{random.randint(1000, 9999)}"
-    client = mqtt.Client(client_id)
+    client = mqtt.Client(client_id=client_id)
     client.on_connect = on_connect
     client.on_message = on_message
     try:
@@ -155,7 +155,7 @@ if st.session_state.time_history:
     fig.add_trace(go.Scatter(x=st.session_state.time_history, y=st.session_state.temp_history, name="Temp (°C)", line=dict(color='#FF4B4B', width=2)))
     fig.add_trace(go.Scatter(x=st.session_state.time_history, y=st.session_state.hum_history, name="Hum (%)", line=dict(color='#0068C9', width=2)))
 fig.update_layout(template="plotly_dark", height=400, margin=dict(l=20, r=20, t=20, b=20))
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 # Control Panel
 st.markdown("###  Remote Control Panel")

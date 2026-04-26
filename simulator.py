@@ -10,7 +10,7 @@ TOPIC_HUM = "giscard/smart_room/hum"
 
 # Unique Client ID for your PC
 client_id = f"giscard-sim-{random.randint(1000, 9999)}"
-client = mqtt.Client(client_id)
+client = mqtt.Client(client_id=client_id)
 
 print(f"Connecting to {BROKER} as {client_id}...")
 try:
