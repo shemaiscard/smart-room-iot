@@ -9,9 +9,11 @@ PORT = 1883
 TOPIC_TEMP = "smart_room/sensors/temp"
 TOPIC_HUM = "smart_room/sensors/hum"
 
-client = mqtt.Client()
+# Using a unique Client ID for your PC
+client_id = f"python-sim-{random.randint(1000, 9999)}"
+client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
 
-print(f"Connecting to broker: {BROKER}")
+print(f"Connecting to broker: {BROKER} as {client_id}")
 client.connect(BROKER, PORT, 60)
 
 print("Starting simulation... Press Ctrl+C to stop.")

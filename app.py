@@ -53,8 +53,8 @@ TOPIC_TEMP = "smart_room/sensors/temp"
 TOPIC_HUM = "smart_room/sensors/hum"
 TOPIC_CONTROL = "smart_room/control"
 
-def on_connect(client, userdata, flags, rc):
-    if rc == 0:
+def on_connect(client, userdata, flags, reason_code, properties):
+    if reason_code == 0:
         client.subscribe([(TOPIC_TEMP, 0), (TOPIC_HUM, 0)])
 
 def on_message(client, userdata, msg):
@@ -122,14 +122,15 @@ if 'last_mqtt_update' not in st.session_state:
     st.session_state.last_mqtt_update = None
 
 if 'mqtt_client' not in st.session_state and mode == "Live MQTT":
-    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    client_id = f"streamlit-dash-{random.randint(1000, 9999)}"
+    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
     client.on_connect = on_connect
     client.on_message = on_message
     try:
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
         client.loop_start()
         st.session_state.mqtt_client = client
-        st.sidebar.success(" Connected to MQTT Broker")
+        st.sidebar.success(f" Connected as {client_id}")
     except Exception as e:
         st.sidebar.error(f" MQTT Connection Failed: {e}")
 
