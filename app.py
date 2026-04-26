@@ -61,14 +61,22 @@ def on_message(client, userdata, msg):
     try:
         val = float(msg.payload.decode())
         now = datetime.now().strftime("%H:%M:%S")
+        
+        # Get last known values to keep lists synchronized
+        last_temp = st.session_state.temp_history[-1] if st.session_state.temp_history else 0.0
+        last_hum = st.session_state.hum_history[-1] if st.session_state.hum_history else 0.0
+
         if msg.topic == TOPIC_TEMP:
             st.session_state.temp_history.append(val)
+            st.session_state.hum_history.append(last_hum)
         elif msg.topic == TOPIC_HUM:
+            st.session_state.temp_history.append(last_temp)
             st.session_state.hum_history.append(val)
+        
         st.session_state.time_history.append(now)
         
-        # Keep only last 20 readings
-        if len(st.session_state.temp_history) > 20:
+        # Keep only last 30 readings for a smoother graph
+        if len(st.session_state.temp_history) > 30:
             st.session_state.temp_history.pop(0)
             st.session_state.hum_history.pop(0)
             st.session_state.time_history.pop(0)
