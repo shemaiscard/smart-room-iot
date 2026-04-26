@@ -105,12 +105,12 @@ if 'mqtt_client' not in st.session_state and mode == "Live MQTT":
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
         client.loop_start()
         st.session_state.mqtt_client = client
-        st.sidebar.success("✅ Connected to MQTT Broker")
+        st.sidebar.success(" Connected to MQTT Broker")
     except Exception as e:
-        st.sidebar.error(f"❌ MQTT Connection Failed: {e}")
+        st.sidebar.error(f" MQTT Connection Failed: {e}")
 
 # Main Dashboard
-st.title("🏠 Smart Room Control Center")
+st.title(" Smart Room Control Center")
 st.markdown("---")
 
 # Layout: 3 Columns for metrics
@@ -126,16 +126,16 @@ else:
     current_hum = st.session_state.hum_history[-1] if st.session_state.hum_history else 0
 
 with col1:
-    st.metric("🌡️ Temperature", f"{current_temp:.1f} °C", delta=f"{random.uniform(-0.5, 0.5):.1f}" if mode == "Simulated" else None)
+    st.metric(" Temperature", f"{current_temp:.1f} °C", delta=f"{random.uniform(-0.5, 0.5):.1f}" if mode == "Simulated" else None)
 
 with col2:
-    st.metric("💧 Humidity", f"{current_hum:.1f} %", delta=f"{random.uniform(-1, 1):.1f}" if mode == "Simulated" else None)
+    st.metric(" Humidity", f"{current_hum:.1f} %", delta=f"{random.uniform(-1, 1):.1f}" if mode == "Simulated" else None)
 
 with col3:
     status_color = "🟢 Secure" if st.session_state.door_locked else "🔴 Unlocked"
-    st.metric("🔐 Security Status", status_color)
+    st.metric(" Security Status", status_color)
 
-st.markdown("### 📊 Real-Time Environmental Trends")
+st.markdown("###  Real-Time Environmental Trends")
 # Chart
 fig = go.Figure()
 if st.session_state.time_history:
@@ -145,11 +145,11 @@ fig.update_layout(template="plotly_dark", height=400, margin=dict(l=20, r=20, t=
 st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("---")
-st.markdown("### 🎮 Remote Control Panel")
+st.markdown("###  Remote Control Panel")
 ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
 
 with ctrl_col1:
-    st.write("💡 **Main Lights**")
+    st.write(" **Main Lights**")
     if st.button(f"Turn {('OFF' if st.session_state.light_status == 'ON' else 'ON')}"):
         st.session_state.light_status = "OFF" if st.session_state.light_status == "ON" else "ON"
         if mode == "Live MQTT" and 'mqtt_client' in st.session_state:
@@ -157,7 +157,7 @@ with ctrl_col1:
     st.info(f"Status: {st.session_state.light_status}")
 
 with ctrl_col2:
-    st.write("🌀 **Ceiling Fan**")
+    st.write(" **Ceiling Fan**")
     if st.button(f"Toggle Fan {('Stop' if st.session_state.fan_status == 'ON' else 'Start')}"):
         st.session_state.fan_status = "OFF" if st.session_state.fan_status == "ON" else "ON"
         if mode == "Live MQTT" and 'mqtt_client' in st.session_state:
@@ -165,7 +165,7 @@ with ctrl_col2:
     st.info(f"Status: {st.session_state.fan_status}")
 
 with ctrl_col3:
-    st.write("🔓 **Door Lock**")
+    st.write(" **Door Lock**")
     if st.button(f"{('Unlock' if st.session_state.door_locked else 'Lock')} Door"):
         st.session_state.door_locked = not st.session_state.door_locked
         if mode == "Live MQTT" and 'mqtt_client' in st.session_state:
