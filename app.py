@@ -30,7 +30,7 @@ st.markdown("""
         border-radius: 20px;
     }
     </style>
-    """, unsafe_allow_name=True)
+    """, unsafe_allow_html=True)
 
 # Session State Initialization
 if 'temp_history' not in st.session_state:
