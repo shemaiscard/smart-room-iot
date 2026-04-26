@@ -74,6 +74,7 @@ def on_message(client, userdata, msg):
             st.session_state.hum_history.append(val)
         
         st.session_state.time_history.append(now)
+        st.session_state.last_mqtt_update = datetime.now()
         
         # Keep only last 30 readings for a smoother graph
         if len(st.session_state.temp_history) > 30:
@@ -85,7 +86,19 @@ def on_message(client, userdata, msg):
 
 # Sidebar
 st.sidebar.title("⚙️ System Settings")
-mode = st.sidebar.radio("Operation Mode", ["Simulated", "Live MQTT"])
+mode = st.sidebar.radio("Operation Mode", ["Simulated", "Live MQTT"], key="mode_selection")
+
+# Reset history if mode changed
+if 'last_mode' not in st.session_state:
+    st.session_state.last_mode = mode
+
+if st.session_state.last_mode != mode:
+    st.session_state.temp_history = []
+    st.session_state.hum_history = []
+    st.session_state.time_history = []
+    st.session_state.last_mode = mode
+    st.rerun()
+
 st.sidebar.divider()
 st.sidebar.info("This dashboard monitors environmental data and controls smart actuators via MQTT.")
 
@@ -99,12 +112,15 @@ def generate_mock_data():
     st.session_state.hum_history.append(h)
     st.session_state.time_history.append(now)
     
-    if len(st.session_state.temp_history) > 20:
+    if len(st.session_state.temp_history) > 30:
         st.session_state.temp_history.pop(0)
         st.session_state.hum_history.pop(0)
         st.session_state.time_history.pop(0)
 
 # MQTT Setup
+if 'last_mqtt_update' not in st.session_state:
+    st.session_state.last_mqtt_update = None
+
 if 'mqtt_client' not in st.session_state and mode == "Live MQTT":
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
@@ -119,6 +135,17 @@ if 'mqtt_client' not in st.session_state and mode == "Live MQTT":
 
 # Main Dashboard
 st.title(" Smart Room Control Center")
+
+if mode == "Live MQTT":
+    if st.session_state.last_mqtt_update:
+        secs_ago = (datetime.now() - st.session_state.last_mqtt_update).total_seconds()
+        if secs_ago < 10:
+            st.success(f"● Receiving Live Data (Last update {int(secs_ago)}s ago)")
+        else:
+            st.warning(f"● Waiting for Data (Last update {int(secs_ago)}s ago - Check your PC Simulator)")
+    else:
+        st.info("● Waiting for first MQTT message... (Run simulator.py on your PC)")
+
 st.markdown("---")
 
 # Layout: 3 Columns for metrics
