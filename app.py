@@ -152,7 +152,9 @@ else:
 
 with col1: st.metric(" Temperature", f"{curr_t:.1f} °C")
 with col2: st.metric(" Humidity", f"{curr_h:.1f} %")
-with col3: st.metric(" Status", "System Online", delta="Live" if mode == "Live MQTT" else "Mock")
+with col3: 
+    door_status = "🔒 Locked" if st.session_state.door_locked else "🔓 Unlocked"
+    st.metric(" Door Security", door_status, delta="Secure" if st.session_state.door_locked else "Alert", delta_color="normal" if st.session_state.door_locked else "inverse")
 
 # Chart
 fig = go.Figure()
