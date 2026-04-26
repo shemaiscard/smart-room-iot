@@ -10,7 +10,7 @@ import queue
 # Page Configuration
 st.set_page_config(
     page_title="Smart Room IoT Dashboard",
-    page_icon="🏠",
+    page_icon="",
     layout="wide",
 )
 
@@ -153,7 +153,7 @@ else:
 with col1: st.metric(" Temperature", f"{curr_t:.1f} °C")
 with col2: st.metric(" Humidity", f"{curr_h:.1f} %")
 with col3: 
-    door_status = "🔒 Locked" if st.session_state.door_locked else "🔓 Unlocked"
+    door_status = " Locked" if st.session_state.door_locked else " Unlocked"
     st.metric(" Door Security", door_status, delta="Secure" if st.session_state.door_locked else "Alert", delta_color="normal" if st.session_state.door_locked else "inverse")
 
 # Chart
@@ -173,19 +173,19 @@ def send_cmd(device, state):
         st.session_state.mqtt_client.publish(TOPIC_CONTROL, f"{device}:{state}")
 
 with c1:
-    if st.button("💡 Toggle Lights"):
+    if st.button(" Toggle Lights"):
         st.session_state.light_status = "OFF" if st.session_state.light_status == "ON" else "ON"
         send_cmd("LIGHT", st.session_state.light_status)
     st.info(f"Lights: {st.session_state.light_status}")
 
 with c2:
-    if st.button("🌀 Toggle Fan"):
+    if st.button(" Toggle Fan"):
         st.session_state.fan_status = "OFF" if st.session_state.fan_status == "ON" else "ON"
         send_cmd("FAN", st.session_state.fan_status)
     st.info(f"Fan: {st.session_state.fan_status}")
 
 with c3:
-    if st.button("🔒 Toggle Door"):
+    if st.button(" Toggle Door"):
         st.session_state.door_locked = not st.session_state.door_locked
         send_cmd("DOOR", "LOCK" if st.session_state.door_locked else "UNLOCK")
     st.info(f"Door: {('LOCKED' if st.session_state.door_locked else 'UNLOCKED')}")
