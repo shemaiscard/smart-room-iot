@@ -1,32 +1,37 @@
 import paho.mqtt.client as mqtt
 import time
 import random
-import json
 
-# MQTT Configuration
+# MQTT Configuration (Giscard Unique Topics)
 BROKER = "broker.hivemq.com"
 PORT = 1883
-TOPIC_TEMP = "smart_room/sensors/temp"
-TOPIC_HUM = "smart_room/sensors/hum"
+TOPIC_TEMP = "giscard/smart_room/temp"
+TOPIC_HUM = "giscard/smart_room/hum"
 
-# Using a unique Client ID for your PC
-client_id = f"python-sim-{random.randint(1000, 9999)}"
-client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+# Unique Client ID for your PC
+client_id = f"giscard-sim-{random.randint(1000, 9999)}"
+client = mqtt.Client(client_id)
 
-print(f"Connecting to broker: {BROKER} as {client_id}")
-client.connect(BROKER, PORT, 60)
+print(f"Connecting to {BROKER} as {client_id}...")
+try:
+    client.connect(BROKER, PORT, 60)
+    print("Connected successfully!")
+    print(f"Publishing to: {TOPIC_TEMP} and {TOPIC_HUM}")
+except Exception as e:
+    print(f"Failed to connect: {e}")
+    exit(1)
 
 print("Starting simulation... Press Ctrl+C to stop.")
 try:
     while True:
-        temp = 20 + random.uniform(0, 10)
-        hum = 40 + random.uniform(0, 20)
+        temp = 22 + random.uniform(-2, 8)
+        hum = 45 + random.uniform(-5, 15)
         
         client.publish(TOPIC_TEMP, f"{temp:.2f}")
         client.publish(TOPIC_HUM, f"{hum:.2f}")
         
-        print(f"Published: Temp={temp:.2f}, Hum={hum:.2f}")
+        print(f"[{time.strftime('%H:%M:%S')}] Sent: Temp={temp:.2f}, Hum={hum:.2f}")
         time.sleep(5)
 except KeyboardInterrupt:
-    print("Simulation stopped.")
+    print("\nSimulation stopped.")
     client.disconnect()
