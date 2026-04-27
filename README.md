@@ -2,6 +2,8 @@
 
 A premium, live IoT monitoring and control system built with **Streamlit** and **MQTT**. This project allows you to monitor room environment data (Temperature & Humidity) and control actuators (Lights, Fan, Door) in real-time.
 
+live demo : https://smart-room-iot.streamlit.app/
+
 ## How it Works (The Workflow)
 
 The system consists of three main parts that work together:
