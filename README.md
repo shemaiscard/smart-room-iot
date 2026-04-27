@@ -1,8 +1,8 @@
-# Smart Room IoT Dashboard 🏠
+# Smart Room IoT Dashboard 
 
 A premium, live IoT monitoring and control system built with **Streamlit** and **MQTT**. This project allows you to monitor room environment data (Temperature & Humidity) and control actuators (Lights, Fan, Door) in real-time.
 
-## 🚀 How it Works (The Workflow)
+## How it Works (The Workflow)
 
 The system consists of three main parts that work together:
 
@@ -22,7 +22,7 @@ The system consists of three main parts that work together:
 
 ---
 
-## 🛠️ Step-by-Step Setup
+##  Step-by-Step Setup
 
 ### 1. Requirements
 Ensure you have the dependencies installed. If running locally:
@@ -45,7 +45,7 @@ Visit your Streamlit URL (e.g., `https://smart-room-iot.streamlit.app`).
 
 ---
 
-## 📂 File Explanations for the Team
+##  File Explanations for the Team
 
 ### `app.py`
 This is the main application. 
