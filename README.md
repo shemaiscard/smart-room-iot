@@ -72,10 +72,11 @@ Hosted on Streamlit Cloud: [smart-room-iot.streamlit.app](https://smart-room-iot
 
 ## Dashboard Features
 
-- **Live Telemetry Metrics:** Temperature, humidity, door lock status, and alarm mode displayed as metric cards.
-- **Lighting Control:** 2x3 grid of color preset buttons (White, Red, Green, Blue, Yellow, OFF).
-- **Door Lock Control:** Unlock and Lock buttons side by side.
-- **Intruder Alarm Control:** Arm and Disarm buttons side by side. Intrusion alert banner appears when the IR sensor triggers.
+- **Built-in Hardware Simulation Mode:** Active by default so the hosted dashboard can be fully tested without physical hardware connected. Includes realistic sensor drift, adjustable target temperatures/humidity, and manual intrusion trigger testing.
+- **Live Telemetry Metrics:** Temperature, humidity, door lock status, and alarm mode displayed as metric cards with dynamic deltas.
+- **Lighting Control:** 2x3 grid of color preset buttons (White, Red, Green, Blue, Yellow, OFF) with live LED indicator previews.
+- **Door Lock Control:** Unlock and Lock buttons side by side with real-time lock status and servo angle state.
+- **Intruder Alarm Control:** Arm and Disarm buttons side by side. Intrusion alert banner appears when the IR sensor or simulation triggers.
 - **Environment Trends Chart:** Plotly line chart showing temperature and humidity history over time.
 - **Mobile Responsive:** CSS optimized for phone screens with forced horizontal button layouts.
 
