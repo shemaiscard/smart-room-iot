@@ -217,17 +217,17 @@ def on_message(client, userdata, msg):
         pass
 
 # Sidebar: Telemetry Mode & Simulation Controls
-st.sidebar.markdown("### ⚙️ Telemetry Mode")
+st.sidebar.markdown("### Telemetry Mode")
 data_mode = st.sidebar.radio(
     "Data Source:",
-    ("🟢 Simulated Data (Hardware Emulation)", "📡 Live Hardware (HiveMQ Broker)"),
+    ("Simulated Data (Hardware Emulation)", "Live Hardware (HiveMQ Broker)"),
     index=0 if st.session_state.simulation_mode else 1
 )
-st.session_state.simulation_mode = (data_mode == "🟢 Simulated Data (Hardware Emulation)")
+st.session_state.simulation_mode = (data_mode == "Simulated Data (Hardware Emulation)")
 
 if st.session_state.simulation_mode:
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🧪 Simulation Controls")
+    st.sidebar.markdown("### Simulation Controls")
     st.session_state.sim_base_temp = st.sidebar.slider(
         "Target Room Temp (°C)", 16.0, 36.0, float(st.session_state.sim_base_temp), 0.5
     )
@@ -235,7 +235,7 @@ if st.session_state.simulation_mode:
         "Target Room Humidity (%)", 20.0, 90.0, float(st.session_state.sim_base_hum), 1.0
     )
     
-    if st.sidebar.button("🚨 Trigger Test Intrusion Alert (IR Sensor)", use_container_width=True):
+    if st.sidebar.button("Trigger Test Intrusion Alert (IR Sensor)", use_container_width=True):
         st.session_state.alarm_triggered = True
         if 'mqtt_client' in st.session_state and st.session_state.mqtt_client is not None:
             try:
@@ -244,7 +244,7 @@ if st.session_state.simulation_mode:
                 pass
         st.rerun()
 
-    if st.sidebar.button("🔄 Reset Chart History", use_container_width=True):
+    if st.sidebar.button("Reset Chart History", use_container_width=True):
         st.session_state.temp_history = []
         st.session_state.hum_history = []
         st.session_state.time_history = []
@@ -252,7 +252,7 @@ if st.session_state.simulation_mode:
 
 # Sidebar: MQTT Network Info
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🌐 MQTT Network Info")
+st.sidebar.markdown("### MQTT Network Info")
 st.sidebar.markdown(f"**Broker:** `{MQTT_BROKER}`")
 st.sidebar.markdown(f"**Port:** `{MQTT_PORT}`")
 st.sidebar.markdown(f"- Subscribed: `{TOPIC_TEMP}`, `{TOPIC_HUM}`, `{TOPIC_ALARM}`")
@@ -349,19 +349,19 @@ st.markdown("<p style='color: #64748b; font-size: 1.1rem; margin-top: -10px;'>Li
 
 # Connection Status Header
 if st.session_state.simulation_mode:
-    st.markdown('<span class="status-badge status-sim">● SIMULATION ACTIVE: Virtual IoT Hardware Node</span>', unsafe_allow_html=True)
+    st.markdown('<span class="status-badge status-sim">SIMULATION ACTIVE: Virtual IoT Hardware Node</span>', unsafe_allow_html=True)
 elif st.session_state.last_mqtt_update:
     secs_ago = (datetime.now() - st.session_state.last_mqtt_update).total_seconds()
     if secs_ago < 15:
-        st.markdown('<span class="status-badge status-online">● LIVE: Receiving Hardware Sensor Data</span>', unsafe_allow_html=True)
+        st.markdown('<span class="status-badge status-online">LIVE: Receiving Hardware Sensor Data</span>', unsafe_allow_html=True)
     else:
-        st.markdown(f'<span class="status-badge status-waiting">● STANDBY: No hardware updates in {int(secs_ago)}s</span>', unsafe_allow_html=True)
+        st.markdown(f'<span class="status-badge status-waiting">STANDBY: No hardware updates in {int(secs_ago)}s</span>', unsafe_allow_html=True)
 else:
-    st.markdown('<span class="status-badge status-offline">● OFFLINE: Waiting for hardware data...</span>', unsafe_allow_html=True)
+    st.markdown('<span class="status-badge status-offline">OFFLINE: Waiting for hardware data...</span>', unsafe_allow_html=True)
 
 # Critical Alarm Banner
 if st.session_state.alarm_triggered:
-    st.error("🚨 INTRUSION DETECTED! The hardware alarm was triggered by the IR Sensor. Please verify room security.")
+    st.error("INTRUSION DETECTED: The hardware alarm was triggered by the IR Sensor. Please verify room security.")
     if st.button("Clear / Disarm Alarm"):
         st.session_state.alarm_triggered = False
         if 'mqtt_client' in st.session_state and st.session_state.mqtt_client is not None:
@@ -406,21 +406,10 @@ def send_cmd(device, state):
 c1, c2, c3 = st.columns(3, gap="small")
 
 # 1. Lights (Grid of 2 Rows and 3 Columns)
-color_glow = {
-    "WHITE": "#ffffff",
-    "RED": "#ef4444",
-    "GREEN": "#22c55e",
-    "BLUE": "#3b82f6",
-    "YELLOW": "#eab308",
-    "OFF": "#475569"
-}
-active_glow = color_glow.get(st.session_state.light_status, "#475569")
-dot_style = f"box-shadow: 0 0 10px {active_glow}; background-color: {active_glow};" if st.session_state.light_status != "OFF" else f"background-color: {active_glow};"
-
 with c1:
     with st.container(key="lights_card"):
         st.markdown("#### Lighting System")
-        st.markdown(f'Current State: <span style="display:inline-block;width:11px;height:11px;border-radius:50%;{dot_style}vertical-align:middle;margin:0 4px 2px 2px;"></span> **{st.session_state.light_status}**', unsafe_allow_html=True)
+        st.write(f"Current State: **{st.session_state.light_status}**")
         
         # Row 1
         r1c1, r1c2, r1c3 = st.columns(3, gap="small")
@@ -456,8 +445,8 @@ with c1:
 with c2:
     with st.container(key="door_card"):
         st.markdown("#### Electronic Door Lock")
-        door_label = "🔒 LOCKED (Servo: 180°)" if st.session_state.door_locked else "🔓 UNLOCKED (Servo: 90°)"
-        st.markdown(f"Current Lock: **{door_label}**")
+        door_label = "LOCKED (Servo: 180°)" if st.session_state.door_locked else "UNLOCKED (Servo: 90°)"
+        st.write(f"Current Lock: **{door_label}**")
         d1, d2 = st.columns(2, gap="small")
         with d1:
             if st.button("Unlock Door", key="door_unlock"):
@@ -472,8 +461,8 @@ with c2:
 with c3:
     with st.container(key="alarm_card"):
         st.markdown("#### Intruder Alarm Mode")
-        alarm_label = "🛡️ ARMED" if st.session_state.caps_mode else "⚪ DISARMED"
-        st.markdown(f"Current Mode: **{alarm_label}**")
+        alarm_label = "ARMED" if st.session_state.caps_mode else "DISARMED"
+        st.write(f"Current Mode: **{alarm_label}**")
         a1, a2 = st.columns(2, gap="small")
         with a1:
             if st.button("Arm Alarm", key="sec_arm"):
