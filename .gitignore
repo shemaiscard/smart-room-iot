@@ -8,3 +8,4 @@ venv/
 dist/
 build/
 .streamlit/secrets.toml
+Wemos_D1_MQTT_SmartHome/secrets.h

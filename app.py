@@ -6,6 +6,10 @@ import time
 import random
 from datetime import datetime, timedelta
 import queue
+import hmac
+import threading
+
+import secure_msg
 
 # Page Configuration
 st.set_page_config(
@@ -191,30 +195,88 @@ if st.session_state.simulation_mode and len(st.session_state.temp_history) == 0:
         st.session_state.time_history.append(pt_time)
     st.session_state.last_mqtt_update = datetime.now()
 
-# MQTT Configuration
-MQTT_BROKER = "broker.hivemq.com"
-MQTT_PORT = 1883
-TOPIC_TEMP = "giscard/smart_room/temp"
-TOPIC_HUM = "giscard/smart_room/hum"
-TOPIC_ALARM = "giscard/smart_room/alarm"
-TOPIC_CONTROL = "giscard/smart_room/control"
+# MQTT Configuration (from .streamlit/secrets.toml or the Streamlit Cloud secrets panel)
+def secret(name, default=None):
+    try:
+        return st.secrets.get(name, default)
+    except Exception:  # no secrets file at all
+        return default
 
-# Callback for MQTT Messages
+MQTT_BROKER = secret("MQTT_HOST", "broker.hivemq.com")
+MQTT_PORT = int(secret("MQTT_PORT", 8883))
+MQTT_TLS = str(secret("MQTT_USE_TLS", "1")).lower() not in ("0", "false", "no")
+MQTT_USER = secret("MQTT_USER", "")
+MQTT_PASS = secret("MQTT_PASS", "")
+SIGNING_KEY = str(secret("SMART_ROOM_KEY", "") or "").encode()
+DASHBOARD_PASSWORD = str(secret("DASHBOARD_PASSWORD", "") or "")
+
+TOPIC_BASE = secret("TOPIC_BASE", "giscard/smart_room")  # must match the board's topics
+TOPIC_TEMP = f"{TOPIC_BASE}/temp"
+TOPIC_HUM = f"{TOPIC_BASE}/hum"
+TOPIC_ALARM = f"{TOPIC_BASE}/alarm"
+TOPIC_CONTROL = f"{TOPIC_BASE}/control"
+TOPIC_STATUS = f"{TOPIC_BASE}/status"
+
+# Callback for MQTT Messages (runs on Paho's thread)
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        client.subscribe([(TOPIC_TEMP, 0), (TOPIC_HUM, 0), (TOPIC_ALARM, 0)])
+        client.subscribe([(TOPIC_TEMP, 0), (TOPIC_HUM, 0), (TOPIC_ALARM, 1), (TOPIC_STATUS, 1)])
 
 def on_message(client, userdata, msg):
     try:
         topic = msg.topic
         payload_str = msg.payload.decode()
+        if topic == TOPIC_STATUS:
+            # "offline" is the board's last will (set when it connects, so it
+            # cannot carry a fresh signature); "online" must be signed.
+            if payload_str == "offline":
+                userdata['queue'].put((topic, "offline"))
+            elif secure_msg.verify(userdata['key'], topic, payload_str, max_skew_ms=None):
+                userdata['queue'].put((topic, "online"))
+            else:
+                userdata['stats']['rejected'] += 1
+            return
+        checked = secure_msg.verify(userdata['key'], topic, payload_str)
+        if checked is None:
+            # Unsigned, forged or stale: anyone can publish on a public broker
+            userdata['stats']['rejected'] += 1
+            return
+        body, _ = checked
         if topic == TOPIC_ALARM:
-            userdata['queue'].put((topic, payload_str))
+            userdata['queue'].put((topic, body))
         else:
-            val = float(payload_str)
-            userdata['queue'].put((topic, val))
+            userdata['queue'].put((topic, float(body)))
     except Exception:
         pass
+
+# Failed unlock attempts are counted across all sessions of this server
+@st.cache_resource
+def login_guard():
+    return {"fails": [], "lock_until": 0.0, "lock": threading.Lock()}
+
+MAX_FAILS, FAIL_WINDOW_S, LOCKOUT_S = 5, 600, 600
+
+def try_unlock(password):
+    guard = login_guard()
+    with guard["lock"]:
+        now = time.time()
+        if now < guard["lock_until"]:
+            return f"Too many failed attempts. Try again in {int(guard['lock_until'] - now) // 60 + 1} min."
+        if DASHBOARD_PASSWORD and hmac.compare_digest(password.encode(), DASHBOARD_PASSWORD.encode()):
+            guard["fails"].clear()
+            return None
+        guard["fails"] = [t for t in guard["fails"] if now - t < FAIL_WINDOW_S] + [now]
+        if len(guard["fails"]) >= MAX_FAILS:
+            guard["lock_until"] = now + LOCKOUT_S
+            guard["fails"].clear()
+        return "Wrong password."
+
+if 'controls_unlocked' not in st.session_state:
+    st.session_state.controls_unlocked = False
+if 'device_status' not in st.session_state:
+    st.session_state.device_status = None
+if 'mqtt_stats' not in st.session_state:
+    st.session_state.mqtt_stats = {'rejected': 0}
 
 # Sidebar: Telemetry Mode & Simulation Controls
 st.sidebar.markdown("### Telemetry Mode")
@@ -235,13 +297,9 @@ if st.session_state.simulation_mode:
         "Target Room Humidity (%)", 20.0, 90.0, float(st.session_state.sim_base_hum), 1.0
     )
     
+    # Simulation stays inside this page: nothing is published to the broker
     if st.sidebar.button("Trigger Test Intrusion Alert (IR Sensor)", use_container_width=True):
         st.session_state.alarm_triggered = True
-        if 'mqtt_client' in st.session_state and st.session_state.mqtt_client is not None:
-            try:
-                st.session_state.mqtt_client.publish(TOPIC_ALARM, "INTRUSION DETECTED!")
-            except Exception:
-                pass
         st.rerun()
 
     if st.sidebar.button("Reset Chart History", use_container_width=True):
@@ -250,32 +308,77 @@ if st.session_state.simulation_mode:
         st.session_state.time_history = []
         st.rerun()
 
+# Sidebar: Live control login
+live_ready = bool(SIGNING_KEY)
+if not st.session_state.simulation_mode:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Live Control")
+    if not live_ready:
+        st.sidebar.warning("Live mode needs SMART_ROOM_KEY in the app secrets (the same key as the board's secrets.h).")
+    elif not DASHBOARD_PASSWORD:
+        st.sidebar.info("Read-only: set DASHBOARD_PASSWORD in the app secrets to enable the controls.")
+    elif st.session_state.controls_unlocked:
+        st.sidebar.success("Controls unlocked for this session.")
+        if st.sidebar.button("Lock Controls", use_container_width=True):
+            st.session_state.controls_unlocked = False
+            st.rerun()
+    else:
+        with st.sidebar.form("unlock_form", clear_on_submit=True):
+            pw = st.text_input("Dashboard password", type="password")
+            if st.form_submit_button("Unlock Controls", use_container_width=True):
+                err = try_unlock(pw)
+                if err:
+                    st.error(err)
+                else:
+                    st.session_state.controls_unlocked = True
+                    st.rerun()
+
 # Sidebar: MQTT Network Info
 st.sidebar.markdown("---")
 st.sidebar.markdown("### MQTT Network Info")
 st.sidebar.markdown(f"**Broker:** `{MQTT_BROKER}`")
-st.sidebar.markdown(f"**Port:** `{MQTT_PORT}`")
-st.sidebar.markdown(f"- Subscribed: `{TOPIC_TEMP}`, `{TOPIC_HUM}`, `{TOPIC_ALARM}`")
+st.sidebar.markdown(f"**Port:** `{MQTT_PORT}` ({'TLS' if MQTT_TLS else 'no TLS'})")
+st.sidebar.markdown("- Messages signed with HMAC-SHA256")
+st.sidebar.markdown(f"- Subscribed: `{TOPIC_TEMP}`, `{TOPIC_HUM}`, `{TOPIC_ALARM}`, `{TOPIC_STATUS}`")
 st.sidebar.markdown(f"- Published: `{TOPIC_CONTROL}`")
+if not st.session_state.simulation_mode and st.session_state.mqtt_stats['rejected']:
+    st.sidebar.caption(f"Rejected {st.session_state.mqtt_stats['rejected']} unsigned or stale messages")
 
 # Sidebar: Auto Refresh Settings
 st.sidebar.markdown("---")
 auto_refresh = st.sidebar.checkbox("Live Telemetry Stream", value=True)
 refresh_rate = st.sidebar.slider("Sampling Rate (sec)", min_value=1, max_value=5, value=2)
 
-# Establish MQTT Connection
-if 'mqtt_client' not in st.session_state:
+# Establish MQTT Connection (live mode only; simulation needs no broker)
+def close_mqtt():
+    client = st.session_state.get('mqtt_client')
+    if client is not None:
+        try:
+            client.loop_stop()
+            client.disconnect()
+        except Exception:
+            pass
+    st.session_state.mqtt_client = None
+
+if st.session_state.simulation_mode or not live_ready:
+    close_mqtt()
+elif st.session_state.get('mqtt_client') is None:
     client_id = f"giscard-dash-{random.randint(1000, 9999)}"
+    userdata = {'queue': st.session_state.data_queue, 'key': SIGNING_KEY, 'stats': st.session_state.mqtt_stats}
     client = None
     try:
         # Paho MQTT 2.x
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id, userdata={'queue': st.session_state.data_queue})
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id, userdata=userdata)
     except (AttributeError, TypeError):
         # Paho MQTT 1.x
-        client = mqtt.Client(client_id=client_id, userdata={'queue': st.session_state.data_queue})
-    
+        client = mqtt.Client(client_id=client_id, userdata=userdata)
+
     client.on_connect = on_connect
     client.on_message = on_message
+    if MQTT_TLS:
+        client.tls_set()  # verifies the broker's certificate against the system CAs
+    if MQTT_USER:
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
     try:
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
         client.loop_start()
@@ -291,6 +394,9 @@ while not st.session_state.data_queue.empty():
     now = datetime.now().strftime("%H:%M:%S")
     st.session_state.last_mqtt_update = datetime.now()
     
+    if topic == TOPIC_STATUS:
+        st.session_state.device_status = val
+        continue
     if topic == TOPIC_ALARM:
         st.session_state.alarm_triggered = True
     else:
@@ -335,11 +441,18 @@ if st.session_state.simulation_mode:
         st.session_state.hum_history.pop(0)
         st.session_state.time_history.pop(0)
 
-    # Broadcast to MQTT broker if connected so other tools/clients stay in sync
-    if 'mqtt_client' in st.session_state and st.session_state.mqtt_client is not None:
+# Commands: in simulation they only change this page; live commands are
+# signed and need the dashboard password.
+controls_disabled = (not st.session_state.simulation_mode) and not st.session_state.controls_unlocked
+
+def send_cmd(device, state):
+    if st.session_state.simulation_mode or controls_disabled:
+        return
+    client = st.session_state.get('mqtt_client')
+    if client is not None:
         try:
-            st.session_state.mqtt_client.publish(TOPIC_TEMP, f"{new_t:.2f}")
-            st.session_state.mqtt_client.publish(TOPIC_HUM, f"{new_h:.2f}")
+            body = f"{device}:{state}"
+            client.publish(TOPIC_CONTROL, secure_msg.sign(SIGNING_KEY, TOPIC_CONTROL, body), qos=1)
         except Exception:
             pass
 
@@ -350,6 +463,8 @@ st.markdown("<p style='color: #64748b; font-size: 1.1rem; margin-top: -10px;'>Li
 # Connection Status Header
 if st.session_state.simulation_mode:
     st.markdown('<span class="status-badge status-sim">SIMULATION ACTIVE: Virtual IoT Hardware Node</span>', unsafe_allow_html=True)
+elif st.session_state.device_status == "offline":
+    st.markdown('<span class="status-badge status-offline">OFFLINE: The board disconnected (broker last will)</span>', unsafe_allow_html=True)
 elif st.session_state.last_mqtt_update:
     secs_ago = (datetime.now() - st.session_state.last_mqtt_update).total_seconds()
     if secs_ago < 15:
@@ -364,11 +479,7 @@ if st.session_state.alarm_triggered:
     st.error("INTRUSION DETECTED: The hardware alarm was triggered by the IR Sensor. Please verify room security.")
     if st.button("Clear / Disarm Alarm"):
         st.session_state.alarm_triggered = False
-        if 'mqtt_client' in st.session_state and st.session_state.mqtt_client is not None:
-            try:
-                st.session_state.mqtt_client.publish(TOPIC_CONTROL, "SECURITY:OFF")
-            except Exception:
-                pass
+        send_cmd("SECURITY", "OFF")
         st.rerun()
 
 st.markdown("---")
@@ -395,13 +506,8 @@ st.markdown("---")
 
 # Remote Control Section
 st.markdown("### Hardware Control Panel")
-
-def send_cmd(device, state):
-    if 'mqtt_client' in st.session_state and st.session_state.mqtt_client is not None:
-        try:
-            st.session_state.mqtt_client.publish(TOPIC_CONTROL, f"{device}:{state}")
-        except Exception:
-            pass
+if controls_disabled:
+    st.info("Live controls are locked. Unlock them with the dashboard password in the sidebar.")
 
 c1, c2, c3 = st.columns(3, gap="small")
 
@@ -414,30 +520,30 @@ with c1:
         # Row 1
         r1c1, r1c2, r1c3 = st.columns(3, gap="small")
         with r1c1:
-            if st.button("White", key="light_white"):
+            if st.button("White", key="light_white", disabled=controls_disabled):
                 st.session_state.light_status = "WHITE"
                 send_cmd("LIGHT", "WHITE")
         with r1c2:
-            if st.button("Red", key="light_red"):
+            if st.button("Red", key="light_red", disabled=controls_disabled):
                 st.session_state.light_status = "RED"
                 send_cmd("LIGHT", "RED")
         with r1c3:
-            if st.button("Green", key="light_green"):
+            if st.button("Green", key="light_green", disabled=controls_disabled):
                 st.session_state.light_status = "GREEN"
                 send_cmd("LIGHT", "GREEN")
                 
         # Row 2
         r2c1, r2c2, r2c3 = st.columns(3, gap="small")
         with r2c1:
-            if st.button("Blue", key="light_blue"):
+            if st.button("Blue", key="light_blue", disabled=controls_disabled):
                 st.session_state.light_status = "BLUE"
                 send_cmd("LIGHT", "BLUE")
         with r2c2:
-            if st.button("Yellow", key="light_yellow"):
+            if st.button("Yellow", key="light_yellow", disabled=controls_disabled):
                 st.session_state.light_status = "YELLOW"
                 send_cmd("LIGHT", "YELLOW")
         with r2c3:
-            if st.button("OFF", key="light_off"):
+            if st.button("OFF", key="light_off", disabled=controls_disabled):
                 st.session_state.light_status = "OFF"
                 send_cmd("LIGHT", "OFF")
 
@@ -449,11 +555,11 @@ with c2:
         st.write(f"Current Lock: **{door_label}**")
         d1, d2 = st.columns(2, gap="small")
         with d1:
-            if st.button("Unlock Door", key="door_unlock"):
+            if st.button("Unlock Door", key="door_unlock", disabled=controls_disabled):
                 st.session_state.door_locked = False
                 send_cmd("DOOR", "UNLOCK")
         with d2:
-            if st.button("Lock Door", key="door_lock"):
+            if st.button("Lock Door", key="door_lock", disabled=controls_disabled):
                 st.session_state.door_locked = True
                 send_cmd("DOOR", "LOCK")
 
@@ -465,11 +571,11 @@ with c3:
         st.write(f"Current Mode: **{alarm_label}**")
         a1, a2 = st.columns(2, gap="small")
         with a1:
-            if st.button("Arm Alarm", key="sec_arm"):
+            if st.button("Arm Alarm", key="sec_arm", disabled=controls_disabled):
                 st.session_state.caps_mode = True
                 send_cmd("CAPS", "ARM")
         with a2:
-            if st.button("Disarm Alarm", key="sec_disarm"):
+            if st.button("Disarm Alarm", key="sec_disarm", disabled=controls_disabled):
                 st.session_state.caps_mode = False
                 st.session_state.alarm_triggered = False
                 send_cmd("CAPS", "DISARM")
@@ -511,7 +617,7 @@ st.plotly_chart(fig, use_container_width=True)
 # Footer and polling update
 st.markdown("---")
 mode_str = "Simulated Hardware Mode" if st.session_state.simulation_mode else "Live Hardware Mode"
-st.caption(f"Status: {mode_str} | Last UI Sync: {datetime.now().strftime('%H:%M:%S')} | Local Broker Port: {MQTT_PORT}")
+st.caption(f"Status: {mode_str} | Last UI Sync: {datetime.now().strftime('%H:%M:%S')} | Broker Port: {MQTT_PORT}")
 
 if auto_refresh:
     time.sleep(refresh_rate)

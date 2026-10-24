@@ -46,19 +46,35 @@ Hosted on Streamlit Cloud: [smart-room-iot.streamlit.app](https://smart-room-iot
 
 ### System Components
 
-1. **Firmware (Wemos_D1_MQTT_SmartHome.ino):** Runs on the Wemos D1. Reads sensors, drives actuators, connects to Wi-Fi, and communicates with the MQTT broker. Written in Arduino C++ using the ESP8266 core.
-2. **MQTT Broker (broker.hivemq.com:1883):** Public broker used as the communication hub between the hardware and the dashboard. No authentication required.
+1. **Firmware (Wemos_D1_MQTT_SmartHome/):** Runs on the Wemos D1. Reads sensors, drives actuators, connects to Wi-Fi, and communicates with the MQTT broker. Written in Arduino C++ using the ESP8266 core.
+2. **MQTT Broker (broker.hivemq.com:8883, TLS):** Public broker used as the communication hub between the hardware and the dashboard. Any other broker (HiveMQ Cloud, Mosquitto) can be set in the secrets.
 3. **Dashboard (app.py):** Streamlit web application that subscribes to sensor topics, displays live telemetry charts, and publishes control commands to actuators.
-4. **Simulator (simulator.py):** Optional script that generates synthetic sensor data for testing the dashboard without physical hardware.
+4. **Signing (secure_msg.py):** Signs and checks every MQTT message (the firmware has the same code in C).
+5. **Simulator (simulator.py):** Optional script that stands in for the board and publishes signed synthetic readings.
+
+### Security
+
+The broker is public, so anyone can connect to it. The system protects itself as follows:
+
+- **TLS:** the board and the dashboard connect on port 8883 and check the broker's certificate (the board trusts Amazon Root CA 1, which signs broker.hivemq.com).
+- **Signed messages:** every reading, alarm and command carries a timestamp and an HMAC-SHA256 tag made with a key shared by the board and the dashboard (`<body>|<timestamp ms>|<tag>`). Messages with a wrong tag, a timestamp more than 30 s off, or (for commands) a timestamp not newer than the last accepted one are dropped, so a stranger cannot unlock the door, fake an alarm or replay a recorded command.
+- **Dashboard password:** in live mode the controls stay disabled until the dashboard password is entered. After 5 wrong passwords in 10 minutes, unlocking is blocked for 10 minutes.
+- **Simulation stays local:** simulation mode never publishes to the broker.
+- **Online status:** the board registers a last-will message, so the dashboard shows when it goes offline.
+
+Readings are still visible to anyone who subscribes to the topics on the public broker (they are signed, not encrypted). Use a private broker with a login if that matters.
 
 ### MQTT Topics
 
-| Topic | Direction | Payload |
+Every payload is signed: `<body>|<timestamp ms>|<HMAC-SHA256 hex>`.
+
+| Topic | Direction | Body |
 |-------|-----------|---------|
 | giscard/smart_room/temp | Hardware to Dashboard | Temperature value in Celsius (float) |
 | giscard/smart_room/hum | Hardware to Dashboard | Humidity value in percent (float) |
 | giscard/smart_room/alarm | Hardware to Dashboard | "INTRUSION DETECTED!" (string) |
-| giscard/smart_room/control | Dashboard to Hardware | Command in format DEVICE:STATE (e.g., LIGHT:RED, DOOR:UNLOCK, CAPS:ARM) |
+| giscard/smart_room/status | Hardware to Dashboard | "online" (retained, signed) or "offline" (last will, unsigned) |
+| giscard/smart_room/control | Dashboard to Hardware | Command in format DEVICE:STATE (e.g., LIGHT:RED, DOOR:UNLOCK, CAPS:ARM), QoS 1 |
 
 ### Supported Control Commands
 
@@ -72,7 +88,8 @@ Hosted on Streamlit Cloud: [smart-room-iot.streamlit.app](https://smart-room-iot
 
 ## Dashboard Features
 
-- **Built-in Hardware Simulation Mode:** Active by default so the hosted dashboard can be fully tested without physical hardware connected. Includes realistic sensor drift, adjustable target temperatures/humidity, and manual intrusion trigger testing.
+- **Built-in Hardware Simulation Mode:** Active by default so the hosted dashboard can be fully tested without physical hardware connected. Includes realistic sensor drift, adjustable target temperatures/humidity, and manual intrusion trigger testing. Nothing is sent to the broker in this mode.
+- **Live Mode:** Shows only signed readings from the board, counts rejected messages, and unlocks the controls with the dashboard password.
 - **Live Telemetry Metrics:** Temperature, humidity, door lock status, and alarm mode displayed as metric cards with dynamic deltas.
 - **Lighting Control:** 2x3 grid of color preset buttons (White, Red, Green, Blue, Yellow, OFF) with live LED indicator previews.
 - **Door Lock Control:** Unlock and Lock buttons side by side with real-time lock status and servo angle state.
@@ -92,7 +109,9 @@ Hosted on Streamlit Cloud: [smart-room-iot.streamlit.app](https://smart-room-iot
 pip install -r requirements.txt
 ```
 
-2. Run the dashboard locally:
+2. For live mode, copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and set `SMART_ROOM_KEY` and `DASHBOARD_PASSWORD` (on Streamlit Cloud, paste the same lines into the app's Secrets panel). Simulation mode needs no secrets.
+
+3. Run the dashboard locally:
 
 ```bash
 streamlit run app.py
@@ -100,7 +119,7 @@ streamlit run app.py
 
 ### Firmware (Arduino IDE)
 
-1. Open `Wemos_D1_MQTT_SmartHome.ino` in Arduino IDE.
+1. Open `Wemos_D1_MQTT_SmartHome/Wemos_D1_MQTT_SmartHome.ino` in Arduino IDE.
 2. Install the following libraries via Library Manager:
    - ESP8266WiFi (included with ESP8266 board package)
    - PubSubClient (by Nick O'Leary)
@@ -109,15 +128,16 @@ streamlit run app.py
    - DHT sensor library (by Adafruit)
    - Servo (included with ESP8266 board package)
 3. Select board: **LOLIN(WEMOS) D1 R2 and mini**.
-4. Set Wi-Fi credentials in the firmware (ssid and password variables).
-5. Upload to the board.
+4. Copy `secrets.example.h` to `secrets.h` in the same folder and fill in the Wi-Fi details and the same `SMART_ROOM_KEY` as the dashboard. `secrets.h` is ignored by Git.
+5. Upload to the board. It sets its clock over NTP before connecting (needed for TLS and for message timestamps).
+6. For finer readings, replace the DHT11 with a DHT22 and change `DHTTYPE` to `DHT22`.
 
 ### Testing Without Hardware
 
-Run the simulator to generate synthetic sensor data:
+Run the simulator to publish signed synthetic readings (same key as the dashboard):
 
 ```bash
-python simulator.py
+SMART_ROOM_KEY=your-key python simulator.py
 ```
 
 ---
@@ -136,7 +156,8 @@ python simulator.py
 
 ## Troubleshooting
 
-- **No data on dashboard:** Verify the Wemos D1 is connected to the same Wi-Fi network and the MQTT broker is reachable. Check the Serial Monitor at 115200 baud for connection status.
+- **No data on dashboard:** Verify the Wemos D1 is connected to Wi-Fi and the MQTT broker is reachable. Check the Serial Monitor at 115200 baud for connection status; a `tls=` message there means the certificate check failed (usually the clock is not set yet).
+- **"Rejected unsigned or stale messages" keeps growing:** the board and the dashboard use different keys, or the board's clock is wrong.
 - **LCD shows nothing:** Confirm the I2C address (0x27 or 0x3F). Run an I2C scanner sketch to detect the correct address.
 - **Door servo not responding:** Verify the servo data wire is connected to pin D13. The servo and RGB LED pins are adjacent on the sensor shield and are commonly swapped by mistake.
 - **Buttons stacked on mobile:** The dashboard uses CSS media queries to force horizontal button layouts. Clear the browser cache if the layout appears broken after an update.
@@ -148,8 +169,10 @@ python simulator.py
 ```
 smart-room-iot-master/
   app.py                          -- Streamlit dashboard (live MQTT mode)
-  Wemos_D1_MQTT_SmartHome.ino     -- Arduino firmware for Wemos D1
-  simulator.py                    -- Synthetic sensor data generator
+  secure_msg.py                   -- Message signing shared by dashboard and simulator
+  Wemos_D1_MQTT_SmartHome/        -- Arduino firmware for Wemos D1 (+ secrets.example.h)
+  simulator.py                    -- Signed synthetic sensor data generator
+  .streamlit/secrets.toml.example -- Dashboard secrets template
   requirements.txt                -- Python dependencies
   README.md                       -- This file
 ```
