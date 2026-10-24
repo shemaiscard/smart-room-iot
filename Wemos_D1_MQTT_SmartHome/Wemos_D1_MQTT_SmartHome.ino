@@ -15,6 +15,7 @@
 // Wi-Fi, broker and signing key live in secrets.h (not in Git).
 // Copy secrets.example.h to secrets.h and fill it in before uploading.
 #include "secrets.h"
+#include "SecureMsg.h"
 
 // Unique client identifier prefix
 const char* client_id_prefix = "WemosSmartHome-";
@@ -76,6 +77,10 @@ rqXRfboQnoZsG4q5WTP468SQvvG5
 #define IR_PIN       D9           // IR Sensor (Physical pin 9)
 #define FAN_PIN      D11          // Cooling Fan (Physical pin 11)
 #define SERVO_PIN    D13          // Door Servo Motor (Physical pin 13)
+
+#if PIEZO_PIN == FAN_PIN
+#warning "PIEZO_PIN and FAN_PIN are the same GPIO: on the Wemos D1 the D7 and D11 headers are both GPIO 13, so the buzzer and the fan switch together. Wire one of them to a free pin and change its definition above."
+#endif
 // =========================================================
 
 // Initialize modules
@@ -116,14 +121,16 @@ const unsigned long ALARM_STEP_MS = 300;
 #define TOPIC_BASE "giscard/smart_room"
 #endif
 const char* TOPIC_CONTROL    = TOPIC_BASE "/control"; // Subscribed control topic (device:state)
-const char* TOPIC_STATUS     = TOPIC_BASE "/status";  // Retained: signed "online", or "offline" (last will)
+const char* TOPIC_STATUS     = TOPIC_BASE "/status";  // Retained, sealed: "online:<session>", or "offline:<session>" (last will)
 const char* TOPIC_TEMP       = TOPIC_BASE "/temp";    // Telemetry output: temperature
 const char* TOPIC_HUMID      = TOPIC_BASE "/hum";     // Telemetry output: humidity
 const char* TOPIC_ALARM      = TOPIC_BASE "/alarm";   // Alarm events output
 
-// ==================== MESSAGE SIGNING ====================
-// Same format as secure_msg.py:
-//   <body>|<timestamp ms>|<hex HMAC-SHA256(key, "<topic>|<body>|<timestamp ms>")>
+// ==================== SEALED MESSAGES ====================
+// Every payload is encrypted and authenticated with AES-256-GCM (SecureMsg.h,
+// the same format as the dashboard's secure_msg.py).
+SecureMsg secureMsg;
+unsigned long long sessionTs = 0;  // start of the current broker session
 
 String u64ToString(unsigned long long v) {
   char buf[21];
@@ -141,59 +148,39 @@ unsigned long long nowMs() {
   return (unsigned long long)time(nullptr) * 1000ULL + (millis() % 1000);
 }
 
-String hmacHex(const String& text) {
-  br_hmac_key_context kc;
-  br_hmac_context hc;
-  uint8_t out[32];
-  br_hmac_key_init(&kc, &br_sha256_vtable, SMART_ROOM_KEY, strlen(SMART_ROOM_KEY));
-  br_hmac_init(&hc, &kc, 0);
-  br_hmac_update(&hc, text.c_str(), text.length());
-  br_hmac_out(&hc, out);
-  static const char hex[] = "0123456789abcdef";
-  String s;
-  s.reserve(64);
-  for (int i = 0; i < 32; i++) { s += hex[out[i] >> 4]; s += hex[out[i] & 15]; }
-  return s;
-}
-
-// Compare without stopping at the first difference (no timing leak)
-bool equalsConstTime(const String& a, const String& b) {
-  if (a.length() != b.length()) return false;
-  uint8_t diff = 0;
-  for (unsigned int i = 0; i < a.length(); i++) diff |= a[i] ^ b[i];
-  return diff == 0;
-}
-
-String signMessage(const char* topic, const String& body) {
+// Our own timestamps strictly increase, even within one millisecond
+unsigned long long nextTs() {
   unsigned long long ts = nowMs();
   if (ts <= lastSentTs) ts = lastSentTs + 1;
   lastSentTs = ts;
-  String tsStr = u64ToString(ts);
-  return body + "|" + tsStr + "|" + hmacHex(String(topic) + "|" + body + "|" + tsStr);
+  return ts;
 }
 
-bool publishSigned(const char* topic, const String& body, bool retained = false) {
+bool sealMessage(const char* topic, const String& body, unsigned long long ts, char* out, size_t outSize) {
+  uint8_t nonce[12];
+  ESP.random(nonce, sizeof nonce);  // hardware random number generator
+  return secureMsg.seal(topic, body.c_str(), ts, nonce, out, outSize);
+}
+
+bool publishSealed(const char* topic, const String& body, bool retained = false) {
   if (!client.connected()) return false;
-  return client.publish(topic, signMessage(topic, body).c_str(), retained);
+  char payload[256];
+  if (!sealMessage(topic, body, nextTs(), payload, sizeof payload)) return false;
+  return client.publish(topic, payload, retained);
 }
 
-// Returns true and fills body if the message is authentic, fresh and newer
+// Returns true and fills body if the command is authentic, fresh and newer
 // than the last accepted command.
-bool verifyCommand(const char* topic, const String& payload, String& body) {
-  int p2 = payload.lastIndexOf('|');
-  if (p2 < 0) return false;
-  int p1 = payload.lastIndexOf('|', p2 - 1);
-  if (p1 < 0) return false;
-  body = payload.substring(0, p1);
-  String tsStr = payload.substring(p1 + 1, p2);
-  String mac = payload.substring(p2 + 1);
-  if (!equalsConstTime(mac, hmacHex(String(topic) + "|" + body + "|" + tsStr))) return false;
-  unsigned long long ts = strtoull(tsStr.c_str(), nullptr, 10);
+bool openCommand(const char* topic, const char* payload, String& body) {
+  char buf[128];
+  unsigned long long ts;
+  if (secureMsg.open(topic, payload, buf, sizeof buf, &ts) < 0) return false;
   unsigned long long now = nowMs();
   unsigned long long skew = ts > now ? ts - now : now - ts;
   if (skew > MAX_SKEW_MS) return false;
   if (ts <= lastCommandTs) return false;  // replayed or out of order
   lastCommandTs = ts;
+  body = buf;
   return true;
 }
 // =========================================================
@@ -260,7 +247,7 @@ void setLEDColor(uint8_t r, uint8_t g, uint8_t b) {
 // Start the alarm: publish the event, then flash and beep from loop()
 void triggerIntruderAlert() {
   Serial.println("INTRUSION DETECTED! Triggering Alarm.");
-  publishSigned(TOPIC_ALARM, "INTRUSION DETECTED!");
+  publishSealed(TOPIC_ALARM, "INTRUSION DETECTED!");
 
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -377,8 +364,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) != TOPIC_CONTROL) return;
 
   String body;
-  if (!verifyCommand(topic, message, body)) {
-    Serial.println("Rejected unsigned, stale or replayed command");
+  if (!openCommand(topic, message.c_str(), body)) {
+    Serial.println("Rejected forged, stale or replayed command");
     return;
   }
   Serial.println(body);
@@ -392,10 +379,15 @@ bool reconnect() {
   const char* user = strlen(MQTT_USER) ? MQTT_USER : nullptr;
   const char* pass = strlen(MQTT_PASS) ? MQTT_PASS : nullptr;
 
-  // Last will: the broker marks the board offline if it vanishes
-  if (client.connect(clientId.c_str(), user, pass, TOPIC_STATUS, 1, true, "offline")) {
+  // Last will: the broker publishes this sealed "offline" for the session if
+  // the board vanishes. It names the session, so an old copy replayed later
+  // does not match the "online" message of a newer session.
+  sessionTs = nextTs();
+  static char lastWill[160];
+  sealMessage(TOPIC_STATUS, "offline:" + u64ToString(sessionTs), sessionTs, lastWill, sizeof lastWill);
+  if (client.connect(clientId.c_str(), user, pass, TOPIC_STATUS, 1, true, lastWill)) {
     Serial.println("Connected to MQTT Broker!");
-    publishSigned(TOPIC_STATUS, "online", true);
+    publishSealed(TOPIC_STATUS, "online:" + u64ToString(sessionTs), true);
 
     // Subscribe to control topic (QoS 1: the broker retries until we acknowledge)
     client.subscribe(TOPIC_CONTROL, 1);
@@ -443,7 +435,9 @@ void setup() {
   espClient.setTrustAnchors(&brokerCA);
   espClient.setBufferSizes(16384, 512); // full receive buffer: the broker does not negotiate smaller records
 #endif
+  secureMsg.begin(SMART_ROOM_KEY);
   client.setServer(MQTT_HOST, MQTT_PORT);
+  client.setBufferSize(512);  // room for the sealed last-will message in the CONNECT packet
   client.setCallback(callback);
 }
 
@@ -499,9 +493,9 @@ void loop() {
         }
       }
 
-      // Publish to MQTT (signed)
-      publishSigned(TOPIC_TEMP, String(temp));
-      publishSigned(TOPIC_HUMID, String(hum));
+      // Publish to MQTT (sealed)
+      publishSealed(TOPIC_TEMP, String(temp));
+      publishSealed(TOPIC_HUMID, String(hum));
     } else {
       Serial.println("Failed to read from DHT sensor!");
     }

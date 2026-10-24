@@ -5,7 +5,7 @@ import random
 
 import secure_msg
 
-# Stands in for the board: publishes signed readings so the dashboard's live
+# Stands in for the board: publishes sealed readings so the dashboard's live
 # mode can be tested without hardware. Needs the same SMART_ROOM_KEY as the
 # dashboard, from the environment:
 #   SMART_ROOM_KEY=... python simulator.py
@@ -46,8 +46,8 @@ try:
         temp = 22 + random.uniform(-2, 8)
         hum = 45 + random.uniform(-5, 15)
 
-        client.publish(TOPIC_TEMP, secure_msg.sign(KEY, TOPIC_TEMP, f"{temp:.2f}"))
-        client.publish(TOPIC_HUM, secure_msg.sign(KEY, TOPIC_HUM, f"{hum:.2f}"))
+        client.publish(TOPIC_TEMP, secure_msg.seal(KEY, TOPIC_TEMP, f"{temp:.2f}"))
+        client.publish(TOPIC_HUM, secure_msg.seal(KEY, TOPIC_HUM, f"{hum:.2f}"))
 
         print(f"[{time.strftime('%H:%M:%S')}] Sent: Temp={temp:.2f}, Hum={hum:.2f}")
         time.sleep(1)

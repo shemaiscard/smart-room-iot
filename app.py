@@ -227,18 +227,19 @@ def on_message(client, userdata, msg):
         topic = msg.topic
         payload_str = msg.payload.decode()
         if topic == TOPIC_STATUS:
-            # "offline" is the board's last will (set when it connects, so it
-            # cannot carry a fresh signature); "online" must be signed.
-            if payload_str == "offline":
-                userdata['queue'].put((topic, "offline"))
-            elif secure_msg.verify(userdata['key'], topic, payload_str, max_skew_ms=None):
-                userdata['queue'].put((topic, "online"))
+            # "online:<session>" or the last will "offline:<session>". The last will is
+            # sealed when the board connects, so it is old by the time it arrives:
+            # check that it is authentic, not that it is fresh.
+            checked = secure_msg.unseal(userdata['key'], topic, payload_str, max_skew_ms=None)
+            state, _, session = checked[0].partition(":") if checked else ("", "", "")
+            if state in ("online", "offline") and session:
+                userdata['queue'].put((topic, (state, session)))
             else:
                 userdata['stats']['rejected'] += 1
             return
-        checked = secure_msg.verify(userdata['key'], topic, payload_str)
+        checked = secure_msg.unseal(userdata['key'], topic, payload_str)
         if checked is None:
-            # Unsigned, forged or stale: anyone can publish on a public broker
+            # Forged, stale or unreadable: anyone can publish on a public broker
             userdata['stats']['rejected'] += 1
             return
         body, _ = checked
@@ -338,11 +339,11 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### MQTT Network Info")
 st.sidebar.markdown(f"**Broker:** `{MQTT_BROKER}`")
 st.sidebar.markdown(f"**Port:** `{MQTT_PORT}` ({'TLS' if MQTT_TLS else 'no TLS'})")
-st.sidebar.markdown("- Messages signed with HMAC-SHA256")
+st.sidebar.markdown("- Messages encrypted and authenticated (AES-256-GCM)")
 st.sidebar.markdown(f"- Subscribed: `{TOPIC_TEMP}`, `{TOPIC_HUM}`, `{TOPIC_ALARM}`, `{TOPIC_STATUS}`")
 st.sidebar.markdown(f"- Published: `{TOPIC_CONTROL}`")
 if not st.session_state.simulation_mode and st.session_state.mqtt_stats['rejected']:
-    st.sidebar.caption(f"Rejected {st.session_state.mqtt_stats['rejected']} unsigned or stale messages")
+    st.sidebar.caption(f"Rejected {st.session_state.mqtt_stats['rejected']} forged, stale or unreadable messages")
 
 # Sidebar: Auto Refresh Settings
 st.sidebar.markdown("---")
@@ -395,8 +396,20 @@ while not st.session_state.data_queue.empty():
     st.session_state.last_mqtt_update = datetime.now()
     
     if topic == TOPIC_STATUS:
-        st.session_state.device_status = val
+        state, session = val
+        if state == "online":
+            previous = st.session_state.get("device_session")
+            if previous is None or int(session) > int(previous):
+                st.session_state.device_session = session
+            st.session_state.device_status = "online"
+        elif int(session) >= int(st.session_state.get("device_session") or 0):
+            # The last will of the current (or a newer) session: the board is gone.
+            # An old last will replayed by someone else names an older session.
+            st.session_state.device_status = "offline"
         continue
+    # Any authentic reading or alarm shows the board is up, which also undoes a
+    # replayed last will that arrived before the board's "online" message
+    st.session_state.device_status = "online"
     if topic == TOPIC_ALARM:
         st.session_state.alarm_triggered = True
     else:
@@ -442,7 +455,7 @@ if st.session_state.simulation_mode:
         st.session_state.time_history.pop(0)
 
 # Commands: in simulation they only change this page; live commands are
-# signed and need the dashboard password.
+# sealed and need the dashboard password.
 controls_disabled = (not st.session_state.simulation_mode) and not st.session_state.controls_unlocked
 
 def send_cmd(device, state):
@@ -452,7 +465,7 @@ def send_cmd(device, state):
     if client is not None:
         try:
             body = f"{device}:{state}"
-            client.publish(TOPIC_CONTROL, secure_msg.sign(SIGNING_KEY, TOPIC_CONTROL, body), qos=1)
+            client.publish(TOPIC_CONTROL, secure_msg.seal(SIGNING_KEY, TOPIC_CONTROL, body), qos=1)
         except Exception:
             pass
 
