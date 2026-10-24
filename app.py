@@ -299,11 +299,11 @@ if st.session_state.simulation_mode:
     )
     
     # Simulation stays inside this page: nothing is published to the broker
-    if st.sidebar.button("Trigger Test Intrusion Alert (IR Sensor)", use_container_width=True):
+    if st.sidebar.button("Trigger Test Intrusion Alert (IR Sensor)", width="stretch"):
         st.session_state.alarm_triggered = True
         st.rerun()
 
-    if st.sidebar.button("Reset Chart History", use_container_width=True):
+    if st.sidebar.button("Reset Chart History", width="stretch"):
         st.session_state.temp_history = []
         st.session_state.hum_history = []
         st.session_state.time_history = []
@@ -320,13 +320,13 @@ if not st.session_state.simulation_mode:
         st.sidebar.info("Read-only: set DASHBOARD_PASSWORD in the app secrets to enable the controls.")
     elif st.session_state.controls_unlocked:
         st.sidebar.success("Controls unlocked for this session.")
-        if st.sidebar.button("Lock Controls", use_container_width=True):
+        if st.sidebar.button("Lock Controls", width="stretch"):
             st.session_state.controls_unlocked = False
             st.rerun()
     else:
         with st.sidebar.form("unlock_form", clear_on_submit=True):
             pw = st.text_input("Dashboard password", type="password")
-            if st.form_submit_button("Unlock Controls", use_container_width=True):
+            if st.form_submit_button("Unlock Controls", width="stretch"):
                 err = try_unlock(pw)
                 if err:
                     st.error(err)
@@ -625,7 +625,7 @@ fig.update_layout(
     xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)'),
     yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)'),
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 # Footer and polling update
 st.markdown("---")
